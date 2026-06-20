@@ -14,7 +14,6 @@
     <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
 
     <style>
-        /* Design AMOLED & Cyber-Ops */
         body {
             background-color: #000000;
             color: #ffffff;
@@ -91,28 +90,43 @@
         .post-header {
             display: flex;
             align-items: center;
+            justify-content: space-between;
             margin-bottom: 10px;
             font-size: 12px;
             color: #888;
         }
+        .post-meta {
+            display: flex;
+            align-items: center;
+        }
         .avatar {
             width: 25px;
             height: 25px;
-            background: #ff0033;
             border-radius: 50%;
             margin-right: 10px;
-            display: inline-block;
         }
+        .post-actions {
+            display: flex;
+            gap: 10px;
+        }
+        .action-btn {
+            background: none;
+            border: none;
+            color: #888;
+            cursor: pointer;
+            font-size: 11px;
+            text-transform: uppercase;
+            padding: 2px 5px;
+        }
+        .action-btn.edit:hover { color: #3399ff; }
+        .action-btn.delete:hover { color: #ff0033; }
         .media-container img, .media-container video {
             max-width: 100%;
             border-radius: 5px;
             margin-top: 10px;
             border: 1px solid #222;
         }
-        audio {
-            width: 100%;
-            margin-top: 10px;
-        }
+        audio { width: 100%; margin-top: 10px; }
     </style>
 </head>
 <body>
@@ -132,15 +146,16 @@
 </div>
 
 <script>
-    // Étape 1 : Charger immédiatement ce qui est dans le cache du téléphone pour la rapidité
     const container = document.getElementById('posts-container');
     const form = document.getElementById('post-form');
 
+    // Générer l'affichage complet des posts
     function renderPosts(posts) {
         container.innerHTML = '';
         posts.forEach(post => {
             const card = document.createElement('div');
             card.className = 'post-card';
+            card.id = `card-${post.id}`;
             
             let mediaHTML = '';
             if (post.filename) {
@@ -152,26 +167,30 @@
 
             card.innerHTML = `
                 <div class="post-header">
-                    <div class="avatar" style="background-color: #${intToRGB(hashCode(post.avatar_seed))}"></div>
-                    <span>NODE_${post.id} || SEED: ${post.avatar_seed}</span>
+                    <div class="post-meta">
+                        <div class="avatar" style="background-color: #${intToRGB(hashCode(post.avatar_seed))}"></div>
+                        <span>NODE_${post.id}</span>
+                    </div>
+                    <div class="post-actions">
+                        <button class="action-btn edit" onclick="editPost('${post.id}')">Éditer</button>
+                        <button class="action-btn delete" onclick="deletePost('${post.id}')">Supprimer</button>
+                    </div>
                 </div>
-                <div class="post-content">${post.description}</div>
+                <div class="post-content" id="content-${post.id}">${post.description}</div>
                 ${mediaHTML}
             `;
             container.appendChild(card);
         });
 
-        // Relancer le rendu LaTeX à chaque affichage
         if (window.MathJax && window.MathJax.typesetPromise) {
             MathJax.typesetPromise();
         }
     }
 
-    // Générateurs de couleurs uniques pour les avatars
     function hashCode(str) { let hash = 0; for (let i = 0; i < str.length; i++) { hash = str.charCodeAt(i) + ((hash << 5) - hash); } return hash; }
     function intToRGB(i){ let c = (i & 0x00FFFFFF).toString(16).toUpperCase(); return "00000".substring(0, 6 - c.length) + c; }
 
-    // Charger les données depuis le serveur local et mettre à jour le cache
+    // Charger depuis le serveur
     async function fetchServerPosts() {
         try {
             const res = await fetch('/api/posts');
@@ -180,46 +199,87 @@
                 localStorage.setItem('local_posts_cache', JSON.stringify(posts));
                 renderPosts(posts);
             }
-        } catch (err) {
-            console.log("Mode hors-ligne ou serveur en veille, utilisation du cache.");
-        }
+        } catch (err) { console.log("Utilisation du cache."); }
     }
 
-    // Étape 2 : Écouter l'envoi du formulaire pour affichage DIRECT sans rechargement
+    // ACTION 1 : AJOUT INSTANTANÉ
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const formData = new FormData(form);
 
-        // Envoyer au serveur
         try {
-            const res = await fetch('/api/posts', {
-                method: 'POST',
-                body: formData
-            });
-
+            const res = await fetch('/api/posts', { method: 'POST', body: formData });
             if (res.ok) {
                 const newPost = await res.json();
                 
-                // Mettre à jour le cache instantanément
                 let currentPosts = JSON.parse(localStorage.getItem('local_posts_cache') || '[]');
-                currentPosts.unshift(newPost); // Ajoute le nouveau post en premier
+                currentPosts.unshift(newPost);
                 localStorage.setItem('local_posts_cache', JSON.stringify(currentPosts));
                 
-                // Forcer l'affichage immédiat dans le DOM
-                renderPosts(currentPosts);
+                renderPosts(currentPosts); // Rendu immédiat
                 form.reset();
             }
-        } catch (err) {
-            alert("Erreur de transmission réseau.");
-        }
+        } catch (err) { alert("Erreur réseau."); }
     });
 
-    // Lancement au démarrage de la page
-    const initialCache = localStorage.getItem('local_posts_cache');
-    if (initialCache) {
-        renderPosts(JSON.parse(initialCache));
+    // ACTION 2 : SUPPRESSION INSTANTANÉE
+    async function deletePost(postId) {
+        if (!confirm("Supprimer définitivement ce payload ?")) return;
+
+        try {
+            const res = await fetch(`/api/posts/${postId}`, { method: 'DELETE' });
+            if (res.ok) {
+                // Retirer immédiatement du DOM sans recharger
+                const card = document.getElementById(`card-${postId}`);
+                if (card) card.remove();
+
+                // Mettre à jour le cache local
+                let currentPosts = JSON.parse(localStorage.getItem('local_posts_cache') || '[]');
+                currentPosts = currentPosts.filter(p => p.id !== postId);
+                localStorage.setItem('local_posts_cache', JSON.stringify(currentPosts));
+            }
+        } catch (err) { alert("Erreur de suppression."); }
     }
-    fetchServerPosts(); // Actualise discrètement depuis le serveur
+
+    // ACTION 3 : MODIFICATION INSTANTANÉE
+    async function editPost(postId) {
+        const contentDiv = document.getElementById(`content-${postId}`);
+        const currentText = contentDiv.innerText;
+        
+        const newText = prompt("Modifier le contenu :", currentText);
+        if (newText === null || newText.trim() === "") return;
+
+        try {
+            const res = await fetch(`/api/posts/${postId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ description: newText })
+            });
+
+            if (res.ok) {
+                // Modifier directement l'affichage du texte à l'écran
+                contentDiv.innerText = newText;
+
+                // Relancer MathJax si le texte contient du LaTeX modifié
+                if (window.MathJax && window.MathJax.typesetPromise) {
+                    MathJax.typesetPromise();
+                }
+
+                // Mettre à jour le cache local
+                let currentPosts = JSON.parse(localStorage.getItem('local_posts_cache') || '[]');
+                const postIndex = currentPosts.findIndex(p => p.id === postId);
+                if (postIndex !== -1) {
+                    currentPosts[postIndex].description = newText;
+                    localStorage.setItem('local_posts_cache', JSON.stringify(currentPosts));
+                }
+            }
+        } catch (err) { alert("Erreur de mise à jour."); }
+    }
+
+    // Démarrage initial rapide
+    const initialCache = localStorage.getItem('local_posts_cache');
+    if (initialCache) { renderPosts(JSON.parse(initialCache)); }
+    fetchServerPosts();
 </script>
 
 </body>
