@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>[ RIA Network ]</title>
+    <title>[ RIA Secured Network ]</title>
     
     <script>
         window.MathJax = {
@@ -86,11 +86,13 @@
         .action-btn {
             background: none;
             border: none;
-            color: #555;
+            color: #444;
             cursor: pointer;
             font-size: 11px;
             text-transform: uppercase;
+            display: none; /* Masqué par défaut */
         }
+        .action-btn.my-post { display: inline-block; color: #888; } /* Visible si c'est mon post */
         .action-btn.edit:hover { color: #3399ff; }
         .action-btn.delete:hover { color: #ff0033; }
         .post-content { white-space: pre-wrap; word-break: break-word; }
@@ -99,10 +101,10 @@
 <body>
 
 <div class="container">
-    <h1>[ RIA - Global Sync Network ]</h1>
+    <h1>[ RIA - Secured Sync Network ]</h1>
 
     <form id="post-form">
-        <textarea id="post-text" placeholder="Écrit ton message ou formule LaTeX... Envoi instantané mondial."></textarea>
+        <textarea id="post-text" placeholder="Écrit ton message ou code LaTeX... Signature sécurisée active."></textarea>
         <div class="form-actions">
             <button type="submit">Broadcast</button>
         </div>
@@ -112,26 +114,38 @@
 </div>
 
 <script>
-    // Connexion immédiate au serveur WebSocket de Render
+    // --- GESTION DE L'IDENTITÉ SÉCURISÉE DU NAVIGATEUR ---
+    let myToken = localStorage.getItem('ria_user_secure_token');
+    if (!myToken) {
+        myToken = 'usr_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+        localStorage.setItem('ria_user_secure_token', myToken);
+    }
+    const myAvatarSeed = myToken.substring(0, 4);
+
     const socket = io();
     const container = document.getElementById('posts-container');
     const form = document.getElementById('post-form');
     const input = document.getElementById('post-text');
 
-    // Structure d'affichage d'un post unique
+    // Génération dynamique avec vérification de possession
     function createPostHTML(post) {
         const card = document.createElement('div');
         card.className = 'post-card';
         card.id = `card-${post.id}`;
+        
+        // Est-ce que ce post m'appartient ?
+        const isMyPost = (post.avatar_seed === myAvatarSeed);
+        const actionClass = isMyPost ? 'action-btn my-post' : 'action-btn';
+
         card.innerHTML = `
             <div class="post-header">
                 <div class="post-meta">
                     <div class="avatar" style="background-color: #${intToRGB(hashCode(post.avatar_seed))}"></div>
-                    <span>NODE_${post.id}</span>
+                    <span>NODE_${post.id} ${isMyPost ? '(Moi)' : ''}</span>
                 </div>
                 <div class="post-actions">
-                    <button class="action-btn edit" onclick="requestEdit('${post.id}')">Éditer</button>
-                    <button class="action-btn delete" onclick="requestDelete('${post.id}')">Supprimer</button>
+                    <button class="${actionClass} edit" onclick="requestEdit('${post.id}')">Éditer</button>
+                    <button class="${actionClass} delete" onclick="requestDelete('${post.id}')">Supprimer</button>
                 </div>
             </div>
             <div class="post-content" id="content-${post.id}">${post.description}</div>
@@ -142,7 +156,6 @@
     function hashCode(str) { let hash = 0; for (let i = 0; i < str.length; i++) { hash = str.charCodeAt(i) + ((hash << 5) - hash); } return hash; }
     function intToRGB(i){ let c = (i & 0x00FFFFFF).toString(16).toUpperCase(); return "00000".substring(0, 6 - c.length) + c; }
 
-    // 1. Charger l'historique au démarrage
     async function loadHistory() {
         try {
             const res = await fetch('/api/posts');
@@ -157,46 +170,50 @@
         if (window.MathJax && window.MathJax.typesetPromise) MathJax.typesetPromise();
     }
 
-    // 2. ENVOYER une action via WebSocket
+    // ENVOI SÉCURISÉ (On passe la clé)
     form.addEventListener('submit', (e) => {
         e.preventDefault();
-        if (!input.value.strip && input.value.trim() === "") return;
-        socket.emit('new_post', { description: input.value });
+        if (input.value.trim() === "") return;
+        socket.emit('new_post', { description: input.value, user_token: myToken });
         input.value = '';
     });
 
     function requestDelete(id) {
-        if (confirm("Supprimer ce message pour TOUT LE MONDE ?")) {
-            socket.emit('delete_post', { id: id });
+        if (confirm("Supprimer définitivement ton message ?")) {
+            socket.emit('delete_post', { id: id, user_token: myToken });
         }
     }
 
     function requestEdit(id) {
         const currentText = document.getElementById(`content-${id}`).innerText;
-        const newText = prompt("Modifier le message global :", currentText);
+        const newText = prompt("Modifier ton message :", currentText);
         if (newText !== null && newText.trim() !== "") {
-            socket.emit('edit_post', { id: id, description: newText });
+            socket.emit('edit_post', { id: id, description: newText, user_token: myToken });
         }
     }
 
-    // 3. RÉCEPTIONNER les mises à jour du serveur en temps réel (pour TOUS les utilisateurs)
+    // RÉCEPTION DES BROADCASTS EN TEMPS RÉEL
     socket.on('broadcast_post', (newPost) => {
         const card = createPostHTML(newPost);
-        container.insertBefore(card, container.firstChild); // Ajoute tout en haut de l'écran chez tout le monde
+        container.insertBefore(card, container.firstChild);
         triggerLaTeX();
     });
 
     socket.on('broadcast_delete', (data) => {
         const card = document.getElementById(`card-${data.id}`);
-        if (card) card.remove(); // S'efface instantanément de l'écran de tout le monde
+        if (card) card.remove();
     });
 
     socket.on('broadcast_edit', (data) => {
         const contentDiv = document.getElementById(`content-${data.id}`);
         if (contentDiv) {
-            contentDiv.innerText = data.description; // Se modifie chez tout le monde
+            contentDiv.innerText = data.description;
             triggerLaTeX();
         }
+    });
+
+    socket.on('security_alert', (data) => {
+        alert(data.error);
     });
 
     loadHistory();
